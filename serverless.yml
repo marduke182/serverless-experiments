@@ -4,21 +4,83 @@ provider:
   name: aws
   runtime: nodejs8.10
   stage: ${opt:stage, 'dev'}
-  environment:
-    MY_SECRET: ${file(../config.${self:provider.stage}.json):CREDS}
+  iamRoleStatements:
+    - Effect: Allow # note that these rights are given in the default policy and are required if you want logs out of your lambda(s)
+      Action:
+      - logs:CreateLogGroup
+      - logs:CreateLogStream
+      - logs:PutLogEvents
+      Resource:
+      - 'Fn::Join':
+        - ':'
+        - - 'arn:aws:logs'
+          - Ref: 'AWS::Region'
+          - Ref: 'AWS::AccountId'
+          - 'log-group:/aws/lambda/*:*:*'
+    - Effect: "Allow"
+      Action:
+        - "cognito-identity:ListIdentityPools"
+      Resource:
+        Fn::Join:
+        - ""
+        - - "*"
+    - Effect: "Allow"
+      Action:
+        - "cognito-identity:*"
+      Resource:
+        Fn::Join:
+        - ":"
+        -
+          - "arn:aws:cognito-identity"
+          - Ref: 'AWS::Region'
+          - Ref: 'AWS::AccountId'
+          - Fn::Join:
+              - ""
+              -
+                - "identitypool/"
+                - Ref: CognitoIdentityPool
+    - Effect: "Allow"
+      Action:
+          - "cognito-sync:ListRecords"
+          - "cognito-sync:UpdateRecords"
+      Resource:
+        Fn::Join:
+        - ":"
+        -
+          - "arn:aws:cognito-sync"
+          - Ref: 'AWS::Region'
+          - Ref: 'AWS::AccountId'
+          - Fn::Join:
+            - ""
+            - - "identitypool/"
+              - Ref: CognitoIdentityPool
+              - "/identity/*/dataset/profile"
+
 
 functions:
-  hello:
-    handler: handler.hello
+  user:
+    handler: handlers/User.handler
+    environment:
+      AWS_ACCOUNT_ID:
+        Ref: 'AWS::AccountId'
+      COGNITO_IDENTITY_POOL_ID:
+        Ref: CognitoIdentityPool
+      COGNITO_DEVELOPER_PROVIDER_NAME: cognito_developer_provider_name_identity_pool
+
+
     events:
-    - http:
-        path: hello
-        method: get
-        cors: true
-        authorizer: aws_iam
+      - http:
+          path: v1/user/{operation}
+          method: post
+          cors: true
+          request:
+            parameters:
+              paths:
+                operation: true
 
 resources:
   Resources:
+
     # Cognito - User pool
     CognitoUserPool:
       Type: AWS::Cognito::UserPool
@@ -36,6 +98,7 @@ resources:
       Type: AWS::Cognito::IdentityPool
       Properties:
         IdentityPoolName: cognito_sls_backend_identity_pool
+        DeveloperProviderName: cognito_developer_provider_name_identity_pool
         AllowUnauthenticatedIdentities: false
         CognitoIdentityProviders:
         - ClientId:
